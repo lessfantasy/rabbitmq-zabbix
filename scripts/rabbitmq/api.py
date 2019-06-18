@@ -60,30 +60,30 @@ class RabbitMQAPI(object):
                     break
         return queues
 
-    def list_shovels(self, filters=None):
+    def list_consumers(self, filters=None):
         '''
-        List all of the RabbitMQ shovels, filtered against the filters provided
+        List all of the RabbitMQ consumers, filtered against the filters provided
         in .rab.auth. See README.md for more information.
         '''
-        shovels = []
+        consumers = []
         if not filters:
             filters = [{}]
         try:
-            for shovel in self.call_api('shovels'):
-                logging.debug("Discovered shovel " + shovel['name'] + ", checking to see if it's filtered...")
+            for consumer in self.call_api('consumers'):
+                logging.debug("Discovered consumer " + consumer['queue']['name'] + ", checking to see if it's filtered...")
                 for _filter in filters:
-                    check = [(x, y) for x, y in shovel.items() if x in _filter]
+                    check = [(x, y) for x, y in consumer.items() if x in _filter]
                     shared_items = set(_filter.items()).intersection(check)
                     if len(shared_items) == len(_filter):
-                        element = {'{#VHOSTNAME}': shovel['vhost'],
-                                   '{#SHOVELNAME}': shovel['name']}
-                        shovels.append(element)
-                        logging.debug('Discovered shovel '+shovel['vhost']+'/'+shovel['name'])
+                        element = {'{#VHOSTNAME}': consumer['queue']['vhost'],
+                                   '{#SHOVELNAME}': consumer['queue']['name']}
+                        consumers.append(element)
+                        logging.debug('Discovered consumer '+consumer['queue']['vhost']+'/'+consumer['queue']['name'])
                         break
-            return shovels
+            return consumers
         except urllib2.HTTPError as err:
             if err.code == 404:
-                return shovels
+                return consumers
             else:
                 raise err
 
@@ -131,8 +131,8 @@ class RabbitMQAPI(object):
         buffer.close()
         return return_code
 
-    def check_shovel(self, filters=None):
-        '''Return the value for a specific item in a shovel's details.'''
+    def check_consumer(self, filters=None):
+        '''Return the value for a specific item in a consumer's details.'''
         return_code = 0
         if not filters:
             filters = [{}]
@@ -140,19 +140,19 @@ class RabbitMQAPI(object):
         buffer = io.StringIO()
 
         try:
-            for shovel in self.call_api('shovels'):
+            for consumer in self.call_api('consumers'):
                 success = False
                 logging.debug("Filtering out by " + str(filters))
                 for _filter in filters:
-                    check = [(x, y) for x, y in shovel.items() if x in _filter]
+                    check = [(x, y) for x, y in consumer.items() if x in _filter]
                     shared_items = set(_filter.items()).intersection(check)
                     if len(shared_items) == len(_filter):
                         success = True
                         break
                 if success:
-                    key = '"rabbitmq.shovels[{0},shovel_{1},{2}]"'
-                    key = key.format(shovel['vhost'], 'state', shovel['name'])
-                    value = shovel.get('state', 0)
+                    key = '"rabbitmq.consumers[{0},consumer_{1},{2}]"'
+                    key = key.format(consumer['queue']['vhost'], 'state', consumer['queue']['name'])
+                    value = consumer.get('state', 1)
                     logging.debug("SENDER_DATA: - %s %s" % (key,value))
                     buffer.write("- %s %s\n" % (key, value))
         except urllib2.HTTPError as err:
@@ -239,7 +239,7 @@ class RabbitMQAPI(object):
 
 def main():
     '''Command-line parameters and decoding for Zabbix use/consumption.'''
-    choices = ['list_queues', 'list_shovels', 'list_nodes', 'queues', 'shovels', 'check_aliveness',
+    choices = ['list_queues', 'list_consumers', 'list_nodes', 'queues', 'consumers', 'check_aliveness',
                'server']
     parser = optparse.OptionParser()
     parser.add_option('--username', help='RabbitMQ API username', default='guest')
@@ -252,19 +252,19 @@ def main():
     parser.add_option('--filters', help='Filter used queues (see README)')
     parser.add_option('--node', help='Which node to check (valid for --check=server)')
     parser.add_option('--conf', default='/etc/zabbix/zabbix_agentd.conf')
-    parser.add_option('--senderhostname', default='', help='Allows including a sender parameter on calls to zabbix_sender')
-    parser.add_option('--logfile', help='File to log errors (defaults to /var/log/zabbix/rabbitmq_zabbix.log)', default='/var/log/zabbix/rabbitmq_zabbix.log')
+    parser.add_option('--senderhostname', default='SRV1', help='Allows including a sender parameter on calls to zabbix_sender')
+    parser.add_option('--logfile', help='File to log errors (defaults to /var/log/zabbix-agent/rabbitmq_zabbix.log)', default='/var/log/zabbix-agent/rabbitmq_zabbix.log')
     parser.add_option('--loglevel', help='Defaults to INFO', default='INFO')
     (options, args) = parser.parse_args()
     if not options.check:
         parser.error('At least one check should be specified')
-    logging.basicConfig(filename=options.logfile or "/var/log/zabbix/rabbitmq_zabbix.log", level=logging.getLevelName(options.loglevel or "INFO"), format='%(asctime)s %(levelname)s: %(message)s')
+    logging.basicConfig(filename=options.logfile or "/var/log/zabbix-agent/rabbitmq_zabbix.log", level=logging.getLevelName(options.loglevel or "INFO"), format='%(asctime)s %(levelname)s: %(message)s')
 
     logging.debug("Started trying to process data")
     api = RabbitMQAPI(user_name=options.username, password=options.password,
                       host_name=options.hostname, port=options.port,
                       conf=options.conf, senderhostname=options.senderhostname,
-		     protocol=options.protocol)
+                     protocol=options.protocol)
     if options.filters:
         try:
             filters = json.loads(options.filters)
@@ -278,12 +278,12 @@ def main():
         print json.dumps({'data': api.list_queues(filters)})
     elif options.check == 'list_nodes':
         print json.dumps({'data': api.list_nodes()})
-    elif options.check == 'list_shovels':
-        print json.dumps({'data': api.list_shovels()})
+    elif options.check == 'list_consumers':
+        print json.dumps({'data': api.list_consumers()})
     elif options.check == 'queues':
         print api.check_queue(filters)
-    elif options.check == 'shovels':
-        print api.check_shovel(filters)
+    elif options.check == 'consumers':
+        print api.check_consumer(filters)
     elif options.check == 'check_aliveness':
         print api.check_aliveness()
     elif options.check == 'server':
